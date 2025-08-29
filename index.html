@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>문장 예측 실험</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- 실험 안내문 -->
+        <div id="instructions" class="screen">
+            <h1>문장 예측 실험</h1>
+            <div class="instruction-content">
+                <h2>실험 안내</h2>
+                <p>안녕하세요! 이 실험에 참여해 주셔서 감사합니다.</p>
+                <p><strong>실험 방법:</strong></p>
+                <ul>
+                    <li>화면에 문장의 일부가 제시됩니다.</li>
+                    <li>다음에 올 것 같은 어절을 예측하여 입력해 주세요.</li>
+                    <li>입력이 완료되면 '확인' 버튼을 클릭하세요.</li>
+                    <li>그러면 다음 어절이 포함된 문장이 제시됩니다.</li>
+                    <li>이 과정을 문장이 완성될 때까지 반복합니다.</li>
+                </ul>
+                <p><strong>주의사항:</strong></p>
+                <ul>
+                    <li>한글 입력을 사용해 주세요.</li>
+                    <li>정확한 반응시간 측정을 위해 다른 프로그램을 사용하지 마세요.</li>
+                    <li>실험 중에는 브라우저 탭을 변경하지 마세요.</li>
+                </ul>
+                <p>준비가 되시면 아래 버튼을 클릭하여 실험을 시작하세요.</p>
+            </div>
+            <button id="startExperiment" class="btn btn-primary">실험 시작</button>
+        </div>
+
+        <!-- 실험 화면 -->
+        <div id="experiment" class="screen hidden">
+            <div class="experiment-header">
+                <div class="progress">진행률: <span id="progressText">0/0</span></div>
+                <div class="timer">경과 시간: <span id="timer">00:00</span></div>
+            </div>
+            
+            <div class="experiment-content">
+                <div class="sentence-display">
+                    <h2>제시된 문장</h2>
+                    <div id="currentSentence" class="sentence-text"></div>
+                </div>
+                
+                <div class="prediction-section">
+                    <h2>다음 어절 예측</h2>
+                    <p>다음에 올 것 같은 어절을 입력해 주세요:</p>
+                    <input type="text" id="predictionInput" class="prediction-input" placeholder="예측 어절을 입력하세요" autocomplete="off">
+                    <button id="confirmPrediction" class="btn btn-primary">확인</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 실험 완료 화면 -->
+        <div id="completion" class="screen hidden">
+            <h1>실험 완료</h1>
+            <p>실험이 완료되었습니다. 결과를 저장하겠습니다.</p>
+            <div id="downloadSection">
+                <button id="downloadResults" class="btn btn-success">결과 다운로드</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

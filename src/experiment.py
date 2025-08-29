@@ -63,6 +63,7 @@ def _patch_pyglet_cocoa_textview_empty_text_guard() -> None:
         return
     try:
         import pyglet  # noqa: F401
+        import unicodedata
         from pyglet.window.cocoa import pyglet_textview as _pt
 
         original_insert = getattr(_pt.PygletTextView, "insertText_", None)
@@ -71,9 +72,11 @@ def _patch_pyglet_cocoa_textview_empty_text_guard() -> None:
 
         def _safe_insert(self, text):  # type: ignore[no-redef]
             try:
-                # 'text' can be an NSString proxy; best-effort length check
+                # 1. None 체크
                 if text is None:
                     return None
+                
+                # 2. 빈 문자열 체크 (NSString proxy 지원)
                 try:
                     if len(text) == 0:  # works for NSString proxies
                         return None
@@ -82,10 +85,27 @@ def _patch_pyglet_cocoa_textview_empty_text_guard() -> None:
                     s = str(text)
                     if not s:
                         return None
+                
+                # 3. 기존 로직 실행
+                self.setString_(self.empty_string)
+                
+                # 4. 텍스트 변환 및 안전한 처리
+                text_str = pyglet.libs.darwin.cocoapy.cfstring_to_string(text)
+                
+                if not text_str or len(text_str) == 0:
+                    return None
+                
+                # 5. 제어 문자 체크 (안전하게)
+                if len(text_str) > 0 and unicodedata.category(text_str[0]) != 'Cc':
+                    self._window.dispatch_event("on_text", text_str)
+                
+            except IndexError:
+                # IndexError 방지
+                return None
             except Exception:
                 # If anything goes wrong, avoid crashing; delegate to original
                 pass
-            return original_insert(self, text)
+            return None
 
         _pt.PygletTextView.insertText_ = _safe_insert  # type: ignore[assignment]
     except Exception:
@@ -159,37 +179,110 @@ def _qt_input_dialog(prompt: str, onset_ref_time: float) -> Tuple[str, float, fl
 
     Returns (text, typing_onset_ms, confirm_rt_ms).
     """
-    from PyQt6 import QtWidgets, QtCore
+    from PyQt6 import QtWidgets, QtCore, QtGui
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(["psychopy-input"])
 
     dlg = QtWidgets.QDialog()
     dlg.setWindowTitle("예측 입력")
     dlg.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+    dlg.setWindowFlags(QtCore.Qt.WindowType.Window | QtCore.Qt.WindowType.WindowStaysOnTopHint)
     layout = QtWidgets.QVBoxLayout(dlg)
 
+    # 프롬프트 라벨
     label = QtWidgets.QLabel(prompt)
-    edit = QtWidgets.QLineEdit()
-    btn = QtWidgets.QPushButton("확인")
-
+    label.setWordWrap(True)
     layout.addWidget(label)
+
+    # 입력 필드 (플레이스홀더 + 한글 IME 지원)
+    edit = QtWidgets.QLineEdit()
+    edit.setFont(QtGui.QFont("Apple SD Gothic Neo", 14))
+    edit.setMinimumHeight(40)
+    edit.setPlaceholderText("여기에 예측 어절을 입력하세요...")
+    edit.setStyleSheet("""
+        QLineEdit {
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            background-color: #fafafa;
+        }
+        QLineEdit:focus {
+            border-color: #0066cc;
+            background-color: white;
+        }
+    """)
     layout.addWidget(edit)
-    layout.addWidget(btn, alignment=QtCore.Qt.AlignmentFlag.AlignRight)
+
+    # 실시간 입력 표시 라벨 (플레이스홀더 스타일)
+    preview_label = QtWidgets.QLabel("입력 중: ")
+    preview_label.setFont(QtGui.QFont("Apple SD Gothic Neo", 12))
+    preview_label.setStyleSheet("color: #666; font-style: italic; padding: 4px;")
+    layout.addWidget(preview_label)
+
+    # 버튼들
+    button_layout = QtWidgets.QHBoxLayout()
+    
+    # 수정 버튼 (입력 내용 지우기)
+    clear_btn = QtWidgets.QPushButton("지우기")
+    clear_btn.setFont(QtGui.QFont("Apple SD Gothic Neo", 11))
+    clear_btn.setStyleSheet("""
+        QPushButton {
+            padding: 6px 12px;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #e0e0e0;
+        }
+    """)
+    
+    # 확인 버튼
+    btn = QtWidgets.QPushButton("확인")
+    btn.setFont(QtGui.QFont("Apple SD Gothic Neo", 12))
+    btn.setStyleSheet("""
+        QPushButton {
+            padding: 8px 16px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #0052a3;
+        }
+    """)
+    
+    button_layout.addWidget(clear_btn)
+    button_layout.addStretch()
+    button_layout.addWidget(btn)
+    layout.addLayout(button_layout)
 
     started_typing_at: Optional[float] = None
     opened_at = core.getTime()
 
-    def on_text(_text: str) -> None:
+    def on_text_changed(text: str) -> None:
         nonlocal started_typing_at
-        if started_typing_at is None and _text:
+        if started_typing_at is None and text:
             started_typing_at = core.getTime()
+        # 실시간 입력 표시 업데이트
+        if text:
+            preview_label.setText(f"입력 중: {text}")
+        else:
+            preview_label.setText("입력 중: ")
 
-    def on_return() -> None:
-        dlg.accept()
+    def clear_text() -> None:
+        edit.clear()
+        edit.setFocus()
 
-    edit.textChanged.connect(on_text)
-    edit.returnPressed.connect(on_return)
-    btn.clicked.connect(on_return)
+    def on_accept() -> None:
+        # 창을 닫기 전에 잠시 대기하여 IME 조합 완료 보장
+        QtCore.QTimer.singleShot(50, dlg.accept)  # 대기 시간 단축
+
+    edit.textChanged.connect(on_text_changed)
+    edit.returnPressed.connect(on_accept)
+    clear_btn.clicked.connect(clear_text)
+    btn.clicked.connect(on_accept)
 
     edit.setFocus()
     dlg.raise_()
@@ -203,7 +296,7 @@ def _qt_input_dialog(prompt: str, onset_ref_time: float) -> Tuple[str, float, fl
 
 
 def collect_prediction_with_ime(win: visual.Window, prompt: str, onset_ref_time: float) -> Tuple[str, float, float]:
-    """Collect input using wx dialog (IME OK).
+    """Collect input using PyQt6 dialog (IME OK).
 
     In macOS fullscreen, other toolkits' dialogs can be hidden. Temporarily exit
     fullscreen during input, then restore fullscreen.
@@ -236,11 +329,20 @@ def collect_prediction_with_ime(win: visual.Window, prompt: str, onset_ref_time:
                     typed += k
     finally:
         try:
-            # 전체화면 복귀 및 이벤트 정리
+            # 전체화면 복귀 및 이벤트 정리 (빠른 포커스)
             if prev_full:
                 win.setFullScr(True, forceRestart=True)
-                core.wait(0.22)
+                core.wait(0.1)  # 대기 시간 단축
+            # 창을 다시 활성화하고 포커스 복원
+            if hasattr(win, 'winHandle'):
+                win.winHandle.set_visible(True)
+                win.winHandle.activate()
+            # 강제로 실험창에 포커스 (빠른 복원)
+            win.winHandle.raise_()
+            win.winHandle.requestActivate()
             event.clearEvents()
+            # 최소 대기로 포커스 안정화
+            core.wait(0.05)
         except Exception:
             pass
 
@@ -332,6 +434,17 @@ def run_experiment(participant: str, stimuli_path: Optional[str] = None) -> Path
         pos=(0, -60),
     )
 
+    # 실시간 입력 표시용 텍스트
+    input_preview_text = visual.TextStim(
+        win,
+        text="",
+        font=font,
+        color="#0066cc",
+        height=24,
+        wrapWidth=1100,
+        pos=(0, -120),
+    )
+
     input_button_rect = None
 
     records: List[TrialRecord] = []
@@ -354,6 +467,8 @@ def run_experiment(participant: str, stimuli_path: Optional[str] = None) -> Path
             # Draw frame
             sentence_text.draw()
             prompt_text.draw()
+            input_preview_text.text = ""  # 입력 표시 초기화
+            input_preview_text.draw()
             input_button_rect, _ = draw_button(win, center=(0, -200), size=(280, 70), text="예측 입력", font=font)
             win.flip()
 
@@ -384,6 +499,14 @@ def run_experiment(participant: str, stimuli_path: Optional[str] = None) -> Path
             event.clearEvents()
             mouse = event.Mouse(win=win)
             mouse.clickReset()
+
+            # 입력 결과를 실험창에 표시
+            input_preview_text.text = f"입력한 예측: {pred}"
+            sentence_text.draw()
+            prompt_text.draw()
+            input_preview_text.draw()
+            win.flip()
+            core.wait(0.8)  # 입력 결과를 잠시 보여줌
 
             # Log record
             rec = TrialRecord(
