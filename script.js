@@ -12,6 +12,11 @@ class ExperimentManager {
         this.participantId = this.generateParticipantId();
         this.isWaitingForInput = false; // 입력 대기 상태 추적
         
+        // 참가자 정보
+        this.participantNumber = null;
+        this.participantGender = null;
+        this.participantAge = null;
+        
         this.initializeEventListeners();
         this.loadStimuliData();
     }
@@ -25,7 +30,7 @@ class ExperimentManager {
     // 이벤트 리스너 초기화
     initializeEventListeners() {
         document.getElementById('startExperiment').addEventListener('click', () => {
-            this.startExperiment();
+            this.validateAndStartExperiment();
         });
 
         document.getElementById('confirmPrediction').addEventListener('click', () => {
@@ -38,6 +43,34 @@ class ExperimentManager {
 
         // 전역 키보드 이벤트 리스너 설정
         this.setupGlobalKeyboardListener();
+    }
+
+    // 참가자 정보 검증 및 실험 시작
+    validateAndStartExperiment() {
+        const participantNumber = document.getElementById('participantNumber').value;
+        const participantGender = document.getElementById('participantGender').value;
+        const participantAge = document.getElementById('participantAge').value;
+
+        // 필수 입력 검증
+        if (!participantNumber || !participantGender || !participantAge) {
+            alert('모든 참가자 정보를 입력해 주세요.');
+            return;
+        }
+
+        // 나이 범위 검증
+        const age = parseInt(participantAge);
+        if (age < 1 || age > 120) {
+            alert('나이는 1세 이상 120세 이하여야 합니다.');
+            return;
+        }
+
+        // 참가자 정보 저장
+        this.participantNumber = participantNumber;
+        this.participantGender = participantGender;
+        this.participantAge = age;
+
+        // 실험 시작
+        this.startExperiment();
     }
 
     // 전역 키보드 이벤트 리스너 설정
@@ -347,16 +380,16 @@ class ExperimentManager {
         
         const result = {
             participantId: this.participantId,
+            participantNumber: this.participantNumber,
+            participantGender: this.participantGender,
+            participantAge: this.participantAge,
             sentenceIndex: this.currentSentenceIndex,
             wordIndex: this.currentWordIndex,
-            sentence: sentence,
-            displayedWords: words.slice(0, this.currentWordIndex + 1).join(' '),
             predictedWord: prediction,
             actualNextWord: actualNextWord,
             screenDisplayTime: this.screenDisplayTime || 0,
             inputStartTime: this.inputStartTime || 0,
             responseTime: responseTime,
-            responseTimeSeconds: (responseTime / 1000).toFixed(3),
             timestamp: new Date().toISOString()
         };
         
