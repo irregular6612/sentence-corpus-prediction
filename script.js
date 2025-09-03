@@ -10,6 +10,7 @@ class ExperimentManager {
         this.inputStartTime = null;
         this.timerInterval = null;
         this.participantId = this.generateParticipantId();
+        this.isWaitingForInput = false; // 입력 대기 상태 추적
         
         this.initializeEventListeners();
         this.loadStimuliData();
@@ -35,17 +36,55 @@ class ExperimentManager {
             this.downloadResults();
         });
 
-        // 키보드 이벤트 (Enter 키로 예측 확인)
-        document.getElementById('predictionInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+        // 전역 키보드 이벤트 리스너 설정
+        this.setupGlobalKeyboardListener();
+    }
+
+    // 전역 키보드 이벤트 리스너 설정
+    setupGlobalKeyboardListener() {
+        document.addEventListener('keydown', (e) => {
+            if (this.isWaitingForInput && e.target.id === 'predictionInput') {
+                this.recordInputStart();
+            }
+        });
+
+        document.addEventListener('keypress', (e) => {
+            if (e.target.id === 'predictionInput' && e.key === 'Enter') {
                 this.confirmPrediction();
             }
         });
 
-        // 입력 시작 시간 측정
-        document.getElementById('predictionInput').addEventListener('focus', () => {
-            this.recordInputStart();
+        // 타이밍 테스트를 위한 전역 키 이벤트
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 't' && e.ctrlKey) {
+                this.testTiming();
+            }
         });
+    }
+
+    // 타이밍 측정 테스트 함수
+    testTiming() {
+        console.log('=== 타이밍 측정 테스트 ===');
+        const now1 = performance.now();
+        const now2 = performance.now();
+        console.log('performance.now() 연속 호출 차이:', now2 - now1, 'ms');
+        
+        const date1 = Date.now();
+        const date2 = Date.now();
+        console.log('Date.now() 연속 호출 차이:', date2 - date1, 'ms');
+        
+        console.log('현재 performance.now():', performance.now());
+        console.log('현재 Date.now():', Date.now());
+        
+        // 1초 후 다시 측정
+        setTimeout(() => {
+            const after1 = performance.now();
+            const after2 = Date.now();
+            console.log('1초 후 performance.now():', after1);
+            console.log('1초 후 Date.now():', after2);
+            console.log('실제 경과 시간 (performance.now):', after1 - now1, 'ms');
+            console.log('실제 경과 시간 (Date.now):', after2 - date1, 'ms');
+        }, 1000);
     }
 
     // 자극 데이터 로드
@@ -58,12 +97,41 @@ class ExperimentManager {
             // 첫 번째 시트의 데이터 가져오기
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
-            const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
             
-            // 헤더 제거하고 문장 데이터 추출
-            this.sentences = data.slice(1).map(row => row[0]).filter(sentence => sentence);
+            // 헤더를 포함한 JSON 데이터로 변환
+            const jsonData = XLSX.utils.sheet_to_json(worksheet);
             
-            console.log(`로드된 문장 수: ${this.sentences.length}`);
+            // 컬럼명 확인
+            if (jsonData.length > 0) {
+                const columns = Object.keys(jsonData[0]);
+                console.log('발견된 컬럼들:', columns);
+                
+                // 'sentence' 컬럼 찾기 (대소문자 구분 없이)
+                let sentenceColumn = null;
+                for (const column of columns) {
+                    if (column.toLowerCase() === 'sentence' || 
+                        column.toLowerCase() === 'text' || 
+                        column.toLowerCase() === '문장') {
+                        sentenceColumn = column;
+                        break;
+                    }
+                }
+                
+                if (sentenceColumn) {
+                    // 'sentence' 컬럼에서 데이터 추출
+                    this.sentences = jsonData
+                        .map(row => row[sentenceColumn])
+                        .filter(sentence => sentence && sentence.toString().trim() !== '');
+                    
+                    console.log(`'${sentenceColumn}' 컬럼에서 로드된 문장 수: ${this.sentences.length}`);
+                    console.log('첫 번째 문장 예시:', this.sentences[0]);
+                } else {
+                    throw new Error(`'sentence' 컬럼을 찾을 수 없습니다. 사용 가능한 컬럼: ${columns.join(', ')}`);
+                }
+            } else {
+                throw new Error('Excel 파일에 데이터가 없습니다.');
+            }
+            
         } catch (error) {
             console.error('자극 데이터 로드 실패:', error);
             // 테스트용 샘플 데이터
@@ -74,6 +142,7 @@ class ExperimentManager {
                 '새로운 영화를 보러 갔다.',
                 '친구와 함께 저녁을 먹었다.'
             ];
+            console.log('테스트용 샘플 데이터를 사용합니다.');
         }
     }
 
@@ -124,13 +193,12 @@ class ExperimentManager {
         const currentWords = words.slice(0, this.currentWordIndex + 1);
         const displayText = currentWords.join(' ');
         
-        document.getElementById('currentSentence').textContent = displayText;
-        
         // 마지막 어절인지 확인
         const isLastWord = this.currentWordIndex === words.length - 1;
         
         if (isLastWord) {
             // 마지막 어절: 입력 필드 숨기고 완료 메시지 표시
+            document.getElementById('currentSentence').textContent = displayText;
             document.getElementById('predictionInput').style.display = 'none';
             document.getElementById('confirmPrediction').style.display = 'none';
             document.querySelector('.prediction-section p').textContent = '문장이 완성되었습니다. 다음 문장으로 진행합니다.';
@@ -142,30 +210,8 @@ class ExperimentManager {
                 this.displayCurrentSentence();
             }, 2000);
         } else {
-            // 예측 단계: 입력 필드 표시
-            document.getElementById('predictionInput').style.display = 'block';
-            document.getElementById('confirmPrediction').style.display = 'block';
-            document.querySelector('.prediction-section p').textContent = '다음에 올 것 같은 어절을 입력해 주세요:';
-            document.getElementById('predictionInput').value = '';
-            
-            // 화면 제시 시간을 먼저 기록
-            this.screenDisplayTime = performance.now();
-            console.log('화면 제시 시간 기록:', this.screenDisplayTime);
-            
-            // inputStartTime 리셋 (새로운 타이밍 시작)
-            this.inputStartTime = null;
-            
-            // DOM 업데이트를 기다린 후 포커스
-            requestAnimationFrame(() => {
-                document.getElementById('predictionInput').focus();
-                // focus 이벤트가 발생하지 않았을 경우를 대비해 직접 시간 기록
-                setTimeout(() => {
-                    if (!this.inputStartTime) {
-                        this.inputStartTime = performance.now();
-                        console.log('강제 입력 시작 시간 기록 (백업):', this.inputStartTime);
-                    }
-                }, 10);
-            });
+            // 예측 단계: 화면 업데이트 후 타이밍 측정
+            this.prepareForPrediction(displayText);
         }
         
         // 진행률 업데이트 (예측 단계만 계산)
@@ -174,6 +220,45 @@ class ExperimentManager {
         }, 0);
         const currentStep = this.getCurrentStep();
         document.getElementById('progressText').textContent = `${currentStep}/${totalSteps}`;
+    }
+
+    // 예측 단계 준비
+    prepareForPrediction(displayText) {
+        // 화면 업데이트
+        document.getElementById('currentSentence').textContent = displayText;
+        document.getElementById('predictionInput').style.display = 'block';
+        document.getElementById('confirmPrediction').style.display = 'block';
+        document.querySelector('.prediction-section p').textContent = '다음에 올 것 같은 어절을 입력해 주세요:';
+        document.getElementById('predictionInput').value = '';
+        
+        // 입력 대기 상태 활성화
+        this.isWaitingForInput = true;
+        
+        // inputStartTime 리셋
+        this.inputStartTime = null;
+        
+        // 화면 렌더링 완료 후 제시 시간 기록
+        this.recordScreenDisplayTime();
+        
+        // 포커스 설정
+        requestAnimationFrame(() => {
+            document.getElementById('predictionInput').focus();
+        });
+    }
+
+    // 화면 제시 시간 기록 (렌더링 완료 후)
+    recordScreenDisplayTime() {
+        // DOM 업데이트가 완료된 후 시간 기록
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                // 추가로 약간의 지연을 두어 렌더링 완료 보장
+                setTimeout(() => {
+                    this.screenDisplayTime = performance.now();
+                    console.log('화면 제시 시간 기록:', this.screenDisplayTime, 'ms');
+                    console.log('화면 제시 시간 (Date.now):', Date.now(), 'ms');
+                }, 50);
+            });
+        });
     }
 
     // 문장을 어절 단위로 분리
@@ -197,9 +282,13 @@ class ExperimentManager {
     // 입력 시작 시간 기록
     recordInputStart() {
         // 이미 기록된 경우 중복 기록 방지
-        if (!this.inputStartTime) {
+        if (!this.inputStartTime && this.isWaitingForInput) {
             this.inputStartTime = performance.now();
-            console.log('입력 시작 시간 기록 (focus 이벤트):', this.inputStartTime);
+            console.log('입력 시작 시간 기록:', this.inputStartTime, 'ms');
+            console.log('입력 시작 시간 (Date.now):', Date.now(), 'ms');
+            
+            // 입력 대기 상태 비활성화
+            this.isWaitingForInput = false;
         }
     }
 
@@ -226,19 +315,34 @@ class ExperimentManager {
         const words = this.splitIntoWords(sentence);
         const actualNextWord = words[this.currentWordIndex + 1] || '';
         
-        // responseTime 계산 개선 (동기 처리)
+        // responseTime 계산
         let responseTime = 0;
         if (this.inputStartTime && this.screenDisplayTime) {
             responseTime = this.inputStartTime - this.screenDisplayTime;
-            console.log('responseTime 계산:', responseTime, 'inputStartTime:', this.inputStartTime, 'screenDisplayTime:', this.screenDisplayTime);
             
-            // 음수인 경우 0으로 설정
+            console.log('=== 반응시간 계산 결과 ===');
+            console.log('화면 제시 시간:', this.screenDisplayTime, 'ms');
+            console.log('입력 시작 시간:', this.inputStartTime, 'ms');
+            console.log('반응시간:', responseTime, 'ms');
+            console.log('반응시간 (초):', (responseTime / 1000).toFixed(3), '초');
+            
+            // 추가 디버깅 정보
+            if (this.experimentStartTime) {
+                console.log('실험 시작 시간:', this.experimentStartTime, 'ms');
+                console.log('화면 제시까지 경과:', this.screenDisplayTime - this.experimentStartTime, 'ms');
+                console.log('입력까지 경과:', this.inputStartTime - this.experimentStartTime, 'ms');
+            }
+            
+            // 음수인 경우 경고
             if (responseTime < 0) {
-                console.warn('음수 responseTime 감지:', responseTime, 'screenDisplayTime:', this.screenDisplayTime, 'inputStartTime:', this.inputStartTime);
+                console.warn('⚠️ 음수 responseTime 감지:', responseTime, 'ms');
+                console.warn('이는 화면 제시 시간이 입력 시작 시간보다 늦게 기록되었음을 의미합니다.');
                 responseTime = 0;
             }
         } else {
-            console.warn('타이밍 데이터 누락:', 'screenDisplayTime:', this.screenDisplayTime, 'inputStartTime:', this.inputStartTime);
+            console.warn('⚠️ 타이밍 데이터 누락');
+            console.warn('screenDisplayTime:', this.screenDisplayTime);
+            console.warn('inputStartTime:', this.inputStartTime);
         }
         
         const result = {
@@ -252,11 +356,12 @@ class ExperimentManager {
             screenDisplayTime: this.screenDisplayTime || 0,
             inputStartTime: this.inputStartTime || 0,
             responseTime: responseTime,
+            responseTimeSeconds: (responseTime / 1000).toFixed(3),
             timestamp: new Date().toISOString()
         };
         
         this.results.push(result);
-        console.log('결과 저장:', result);
+        console.log('결과 저장 완료:', result);
     }
 
     // 실험 완료

@@ -60,3 +60,4 @@ except Exception as e:
     print(f"\n❌ 패치 적용 실패: {e}")
 
 print("\n진단 완료!")
+
